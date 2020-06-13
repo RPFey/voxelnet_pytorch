@@ -2,12 +2,13 @@ from utils import get_filtered_lidar, project_velo2rgb, draw_rgb_projections
 from config import config as cfg
 from data.kitti import KittiDataset
 import torch.utils.data as data
-from nms.pth_nms import pth_nms
+# from nms.pth_nms import pth_nms
 import torch.nn.functional as F
 import numpy as np
 import torch.backends.cudnn
 import cv2
 import matplotlib.pyplot as plt
+from detectron2.layers import nms_rotated
 torch.backends.cudnn.benchmark=True
 torch.backends.cudnn.enabled=True
 
@@ -25,8 +26,8 @@ def delta_to_boxes3d(deltas, anchors):
     boxes3d = torch.zeros_like(deltas)
 
     if deltas.is_cuda:
-        anchors = anchors.cuda()
-        boxes3d = boxes3d.cuda()
+        anchors = anchors.to(cfg.device)
+        boxes3d = boxes3d.to(cfg.device)
 
     anchors_reshaped = anchors.view(-1, 7)
 
@@ -67,79 +68,92 @@ def detection_collate(batch):
 
 
 def box3d_center_to_corner_batch(boxes_center):
-    # (N, 7) -> (N, 8, 3)
+    # (N, 7) -> (N, 8)
     N = boxes_center.shape[0]
-    ret = torch.zeros((N, 8, 3))
-    if boxes_center.is_cuda:
-        ret = ret.cuda()
 
-    for i in range(N):
-        box = boxes_center[i]
-        translation = box[0:3]
-        size = box[3:6]
-        rotation = [0, 0, box[-1]]
+    x, y, z, h, w, l,theta = boxes_center.chunk(7, dim=1)
+    sizes = (w * l).squeeze()
+    zero_pad = torch.zeros((boxes_center.shape[0], 1)).to(cfg.device)
+    one_pad = torch.ones((boxes_center.shape[0], 1)).to(cfg.device)
+    box_shape = torch.cat([
+        -0.5*l , -0.5*l,  0.5*l, 0.5*l, -0.5*l, -0.5*l,  0.5*l, 0.5*l,\
+        0.5*w  , -0.5*w, -0.5*w, 0.5*w,  0.5*w, -0.5*w, -0.5*w, 0.5*w,\
+        zero_pad, zero_pad, zero_pad, zero_pad, h, h, h, h \
+    ], dim = 1).unsqueeze(2).reshape((-1, 3, 8))
+    rotMat = torch.cat([
+        torch.cos(theta), -torch.sin(theta), zero_pad,\
+        torch.sin(theta), torch.cos(theta), zero_pad, \
+        zero_pad, zero_pad, one_pad \
+    ], dim=1).unsqueeze(2).reshape((-1, 3, 3))
+    trans = torch.cat((x,y,z), dim=1).unsqueeze(2) # N * 3 * 1
+    corner = torch.bmm(rotMat, box_shape) + trans
 
-        h, w, l = size[0], size[1], size[2]
-        trackletBox = torch.FloatTensor([  # in velodyne coordinates around zero point and without orientation yet
-            [-l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2], \
-            [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2], \
-            [0, 0, 0, 0, h, h, h, h]])
-        if boxes_center.is_cuda:
-            trackletBox = trackletBox.cuda()
-        # re-create 3D bounding box in velodyne coordinate system
-        yaw = rotation[2]
-        rotMat = torch.FloatTensor([
-            [np.cos(yaw), -np.sin(yaw), 0.0],
-            [np.sin(yaw), np.cos(yaw), 0.0],
-            [0.0, 0.0, 1.0]])
-        if boxes_center.is_cuda:
-            rotMat = rotMat.cuda()
+    return corner, sizes
 
-        cornerPosInVelo = torch.mm(rotMat, trackletBox) + translation.repeat(8, 1).t()
-        box3d = cornerPosInVelo.transpose(0,1)
-        ret[i] = box3d
-
-    return ret
-
-def box3d_corner_to_top_batch(boxes3d, use_min_rect=True):
+def box3d_corner_to_top_batch(boxes3d):
     # [N,8,3] -> [N,4,2] -> [N,8]
-    box3d_top=[]
+    box3d_top=boxes3d[:, :2, :4]
+    return box3d_top.reshape((-1, 8))
 
-    num =len(boxes3d)
-    for n in range(num):
-        b   = boxes3d[n]
-        x0 = b[0,0]
-        y0 = b[0,1]
-        x1 = b[1,0]
-        y1 = b[1,1]
-        x2 = b[2,0]
-        y2 = b[2,1]
-        x3 = b[3,0]
-        y3 = b[3,1]
-        box3d_top.append([x0,y0,x1,y1,x2,y2,x3,y3])
+def nms(boxes_bottom, nms_threshold):
+    # boxes_bottom (N, 9)
+    x = torch.linspace(0,1,cfg.num_dim)
+    y = torch.linspace(0,1,cfg.num_dim)
+    X, Y = torch.meshgrid(x,y)
+    coords = torch.cat([X.reshape(1, -1), Y.reshape(1, -1)], dim=0).to(cfg.device)
+    query = []
 
-    if use_min_rect:
-        box8pts = torch.FloatTensor(np.array(box3d_top))
-        if boxes3d.is_cuda:
-            box8pts = box8pts.cuda()
-        min_rects = torch.zeros((box8pts.shape[0], 4))
-        if boxes3d.is_cuda:
-            min_rects = min_rects.cuda()
-        # calculate minimum rectangle
-        min_rects[:, 0] = torch.min(box8pts[:, [0, 2, 4, 6]], dim=1)[0]
-        min_rects[:, 1] = torch.min(box8pts[:, [1, 3, 5, 7]], dim=1)[0]
-        min_rects[:, 2] = torch.max(box8pts[:, [0, 2, 4, 6]], dim=1)[0]
-        min_rects[:, 3] = torch.max(box8pts[:, [1, 3, 5, 7]], dim=1)[0]
-        return min_rects
+    # filter nonsigular
+    x1 = boxes_bottom[:, 0] - boxes_bottom[:, 1]
+    y1 = boxes_bottom[:, 4] - boxes_bottom[:, 5]
+    x2 = boxes_bottom[:, 2] - boxes_bottom[:, 1]
+    y2 = boxes_bottom[:, 6] - boxes_bottom[:, 5]
 
-    return box3d_top
+    sizes = torch.sqrt(x1**2 + y1**2) * torch.sqrt(x2**2 + y2**2) # sizes of rectangle
+
+    deter = torch.abs(x1*y2 - x2*y1)
+    non_singular = torch.nonzero(deter > 1e-1)
+    boxes_bottom = boxes_bottom[non_singular].reshape(-1, 10)
+    sizes = sizes[non_singular].reshape(-1)
+    if boxes_bottom.shape[0] == 0:
+        return None
+
+    alpha_1 = torch.stack([boxes_bottom[:, 0] - boxes_bottom[:, 1], boxes_bottom[:, 4] - boxes_bottom[:, 5]], dim = 1) # (x1, y1)
+    alpha_2 = torch.stack([boxes_bottom[:, 2] - boxes_bottom[:, 1], boxes_bottom[:, 6] - boxes_bottom[:, 5]], dim = 1) # (x2, y2)
+    trans = torch.stack([boxes_bottom[:, 1], boxes_bottom[:, 5]], dim = 1)
+
+    while trans.shape[0] > 1:
+        Rot1 = torch.stack([alpha_1[0, :].t(), alpha_2[0, :].t()], dim=1)
+        train_trans = torch.mm(Rot1, coords).unsqueeze(0) + (trans[0, :] - trans[1:, :]).unsqueeze(2).repeat(1, 1, cfg.num_dim**2) # N * 2 * 2601
+        Rot2 = torch.cat([alpha_1[1:, :].unsqueeze(2), alpha_2[1:, :].unsqueeze(2)], dim=2)
+        translated = torch.bmm(torch.inverse(Rot2), train_trans) # N * 2 * 2601
+
+        x_fit = (0<=translated[:, 0, :])*(translated[:, 0, :]<=1)
+        y_fit = (0<=translated[:, 1, :])*(translated[:, 1, :]<=1)
+        Intersection = (x_fit * y_fit).float()
+
+        Intersection = torch.sum(Intersection, dim = 1) / cfg.num_dim**2
+        IoU = sizes[0] * Intersection / (sizes[0] + sizes[1:] - sizes[0]*Intersection)
+        index = torch.nonzero(IoU < nms_threshold) + 1
+
+        trans = trans[index].reshape(-1, 2)
+        alpha_1 = alpha_1[index].reshape(-1, 2)
+        alpha_2 = alpha_2[index].reshape(-1, 2)
+        query.append(boxes_bottom[0])
+        boxes_bottom = boxes_bottom[index].reshape(-1, 10)
+        sizes = sizes[index].reshape(-1)
+
+    if boxes_bottom.shape[0] == 1:
+        query.append(boxes_bottom[0])
+    return torch.stack(query, dim=0)
 
 def draw_boxes(reg, prob, images, calibs, ids, tag):
-    prob = prob.view(cfg.N, -1)
+    prob = prob.reshape(cfg.N, -1)
     batch_boxes3d = delta_to_boxes3d(reg, cfg.anchors)
     mask = torch.gt(prob, cfg.score_threshold)
     mask_reg = mask.unsqueeze(2).repeat(1, 1, 7)
 
+    out_images = []
     for batch_id in range(cfg.N):
         boxes3d = torch.masked_select(batch_boxes3d[batch_id], mask_reg[batch_id]).view(-1, 7)
         scores = torch.masked_select(prob[batch_id], mask[batch_id])
@@ -149,23 +163,40 @@ def draw_boxes(reg, prob, images, calibs, ids, tag):
         id = ids[batch_id]
 
         if len(boxes3d) != 0:
+            # boxes3d_corner, sizes = box3d_center_to_corner_batch(boxes3d)
+            # boxes2d_bottom = box3d_corner_to_top_batch(boxes3d_corner)
+            # boxes2d_score = torch.cat((boxes2d_bottom, scores.unsqueeze(1), torch.arange(0, len(boxes2d_bottom)).float().unsqueeze(1).to(cfg.device)), dim=1)
 
-            boxes3d_corner = box3d_center_to_corner_batch(boxes3d)
-            boxes2d = box3d_corner_to_top_batch(boxes3d_corner)
-            boxes2d_score = torch.cat((boxes2d, scores.unsqueeze(1)), dim=1)
+            # args = torch.argsort(boxes2d_score[:, 8], descending=True)
+            # boxes2d_score = boxes2d_score[args]
+
+            # vac  = torch.nonzero(sizes > 1e-2)
+            # boxes2d_score = boxes2d_score[vac].squeeze()
+            # if boxes2d_score.shape[0] == 0:
+            #     out_images.append(image)
+            #     continue
 
             # NMS
-            keep = pth_nms(boxes2d_score, cfg.nms_threshold)
-            boxes3d_corner_keep = boxes3d_corner[keep]
-            print("No. %d objects detected" % len(boxes3d_corner_keep))
+            # boxes2d_score = nms(boxes2d_score, cfg.nms_threshold)
 
+            index = nms_rotated(boxes3d[..., [0, 1, 5, 4, 6]], scores, 0.01)
+            if len(index) is None:
+                out_images.append(image)
+                continue
+            # boxes3d_corner_keep = boxes3d_corner[boxes2d_score[:, 9].long()]
+            boxes3d = boxes3d[index]
+            print("No. %d objects detected" % len(boxes3d))
+            boxes3d_corner_keep, _ = box3d_center_to_corner_batch(boxes3d)
+            boxes3d_corner_keep = boxes3d_corner_keep.cpu().numpy()
+            boxes3d_corner_keep = np.transpose(boxes3d_corner_keep, (0, 2, 1))
             rgb_2D = project_velo2rgb(boxes3d_corner_keep, calib)
             img_with_box = draw_rgb_projections(image, rgb_2D, color=(0, 0, 255), thickness=1)
-            cv2.imwrite('results/%s_%s.png' % (id,tag), img_with_box)
+            out_images.append(img_with_box)
+    return np.array(out_images)
 
-        else:
-            cv2.imwrite('results/%s_%s.png' % (id,tag), image)
-            print("No objects detected")
+if __name__=='__main__':
+    center = torch.tensor([[1, 1, 1, 2, 3, 4, 0.3]]).to(cfg.device)
+    box3d_center_to_corner_batch(center)
 
 
 

@@ -1,5 +1,6 @@
 import numpy as np
-from scipy.misc import imread
+import cv2
+import sys
 
 CAM = 2
 
@@ -51,7 +52,7 @@ def project_velo_points_in_img(pts3d, T_cam_velo, Rrect, Prect):
 
 def align_img_and_pc(img_dir, pc_dir, calib_dir):
     
-    img = imread(img_dir)
+    img = cv2.imread(img_dir)
     pts = load_velodyne_points( pc_dir )
     P, Tr_velo_to_cam, R_cam_to_rect = load_calib(calib_dir)
 
@@ -79,13 +80,13 @@ def align_img_and_pc(img_dir, pc_dir, calib_dir):
     return points
 
 # update the following directories
-IMG_ROOT = '/media/billy/New Volume/KITTI/testing/image_2/'
-PC_ROOT = '/media/billy/New Volume/KITTI/testing/velodyne/'
-CALIB_ROOT = '/media/billy/New Volume/KITTI/testing/calib/'
-PC_CROP_ROOT = '/media/billy/New Volume/KITTI/testing/crop/'
+IMG_ROOT = '/data/cxg1/VoxelNet_pro/Data/training/image_2/'
+PC_ROOT = '/data/cxg1/VoxelNet_pro/Data/training/velodyne/'
+CALIB_ROOT = '/data/cxg1/VoxelNet_pro/Data/training/calib/'
+PC_CROP_ROOT = '/data/cxg1/VoxelNet_pro/Data/training/crop/'
 
 
-for frame in range(0, 7518):
+for frame in range(0, 7481):
     img_dir = IMG_ROOT + '%06d.png' % frame
     pc_dir = PC_ROOT + '%06d.bin' % frame
     calib_dir = CALIB_ROOT + '%06d.txt' % frame
@@ -93,7 +94,7 @@ for frame in range(0, 7518):
     points = align_img_and_pc(img_dir, pc_dir, calib_dir)
     
     output_name = PC_CROP_ROOT + '%06d.bin' % frame
-    print('Save to %s' % output_name)
+    sys.stdout.write('Save to %s \n' % output_name)
     points[:,:4].astype('float32').tofile(output_name)
 
 

@@ -89,7 +89,7 @@ class SVFE(nn.Module):
         self.vfe_2 = VFE(32,128)
         self.fcn = FCN(128,128)
     def forward(self, x):
-        mask = torch.ne(torch.max(x,2)[0], 0)
+        mask = torch.ne(torch.max(x,2)[0], 0) # 滤掉为零的点
         x = self.vfe_1(x, mask)
         x = self.vfe_2(x, mask)
         x = self.fcn(x)
@@ -143,9 +143,8 @@ class RPN(nn.Module):
         x_0 = self.deconv_1(x)
         x_1 = self.deconv_2(x_skip_2)
         x_2 = self.deconv_3(x_skip_1)
-        x = torch.cat((x_0,x_1,x_2),1)
-        return self.score_head(x),self.reg_head(x)
-
+        x = torch.cat((x_0,x_1,x_2), dim = 1)
+        return self.score_head(x), self.reg_head(x)
 
 class VoxelNet(nn.Module):
 
@@ -158,11 +157,11 @@ class VoxelNet(nn.Module):
     def voxel_indexing(self, sparse_features, coords):
         dim = sparse_features.shape[-1]
 
-        dense_feature = Variable(torch.zeros(dim, cfg.N, cfg.D, cfg.H, cfg.W).cuda())
+        dense_feature = torch.zeros(cfg.N, cfg.D, cfg.H, cfg.W, dim).to(cfg.device)
 
-        dense_feature[:, coords[:,0], coords[:,1], coords[:,2], coords[:,3]]= sparse_features
+        dense_feature[coords[:,0], coords[:,1], coords[:,2], coords[:,3], :]= sparse_features
 
-        return dense_feature.transpose(0, 1)
+        return dense_feature.permute(0, 4, 1, 2, 3)
 
     def forward(self, voxel_features, voxel_coords):
 
@@ -176,7 +175,9 @@ class VoxelNet(nn.Module):
         # region proposal network
 
         # merge the depth and feature dim into one, output probability score map and regression map
-        psm,rm = self.rpn(cml_out.view(cfg.N,-1,cfg.H, cfg.W))
+        score, reg = self.rpn(cml_out.view(cfg.N,-1,cfg.H, cfg.W))
+        score = torch.sigmoid(score)
+        score = score.permute((0, 2, 3, 1))
 
-        return psm, rm
+        return score, reg
 

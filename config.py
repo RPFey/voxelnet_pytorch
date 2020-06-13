@@ -18,7 +18,7 @@ class config:
     vw = 0.2
 
     # points cloud range
-    xrange = (0, 70.4)
+    xrange = (0.0, 70.4)
     yrange = (-40, 40)
     zrange = (-3, 1)
 
@@ -27,16 +27,16 @@ class config:
     H = math.ceil((yrange[1] - yrange[0]) / vh)
     D = math.ceil((zrange[1] - zrange[0]) / vd)
 
-    # iou threshold
-    pos_threshold = 0.6
-    neg_threshold = 0.45
+    # # iou threshold
+    # pos_threshold = 0.9
+    # neg_threshold = 0.45
 
     #   anchors: (200, 176, 2, 7) x y z h w l r
-    x = np.linspace(xrange[0]+vw, xrange[1]-vw, W/2)
-    y = np.linspace(yrange[0]+vh, yrange[1]-vh, H/2)
+    x = np.linspace(xrange[0]+vw, xrange[1]-vw, W//2)
+    y = np.linspace(yrange[0]+vh, yrange[1]-vh, H//2)
     cx, cy = np.meshgrid(x, y)
-    # all is (w, l, 2)
-    cx = np.tile(cx[..., np.newaxis], 2)
+    # all is (w, l, 2) 
+    cx = np.tile(cx[..., np.newaxis], 2) 
     cy = np.tile(cy[..., np.newaxis], 2)
     cz = np.ones_like(cx) * -1.0
     w = np.ones_like(cx) * 1.6
@@ -50,5 +50,10 @@ class config:
     anchors_per_position = 2
 
     # non-maximum suppression
-    nms_threshold = 0.1
-    score_threshold = 0.96
+    nms_threshold = 1e-3
+    score_threshold = 0.9
+
+    device = "cuda:2"
+    num_dim = 51
+
+    last_epoch=0

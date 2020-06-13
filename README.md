@@ -3,21 +3,14 @@
 This is an unofficial implementation of [VoxelNet: End-to-End Learning for Point Cloud Based 3D Object Detection](https://arxiv.org/abs/1711.06396) in pytorch. A large part of this project is based on the work [here](https://github.com/jeasinema/VoxelNet-tensorflow)
 # Dependencies
 - `python3.5+`
-- `pytorch` (tested on 0.3.1)
+- `pytorch` (tested on 1.4)
 - `opencv`
 - `shapely`
 - `mayavi`
 
 # Installation
 1. Clone this repository.
-2. Compile the Cython module for box_overlaps
-```bash
-$ python3 setup.py build_ext --inplace
-```
-3. Compile the nms model
-```bash
-$ python3 nms/build.py
-```
+2. the nms & box_overlap is based on [detectron2](https://github.com/facebookresearch/detectron2), Please install this libs.
 
 
 # Data Preparation

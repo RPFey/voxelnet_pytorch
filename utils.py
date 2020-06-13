@@ -2,12 +2,16 @@ from __future__ import division
 import numpy as np
 from config import config as cfg
 import math
-import mayavi.mlab as mlab
+# import mayavi.mlab as mlab
 import cv2
 from box_overlaps import *
 from data_aug import aug_data
+import matplotlib.pyplot as plt
+import matplotlib
+import os
+import torch
 
-def get_filtered_lidar(lidar, boxes3d=None):
+def get_filtered_lidar(lidar, boxes3d=None, gt_box3d=None):
 
     pxs = lidar[:, 0]
     pys = lidar[:, 1]
@@ -25,7 +29,7 @@ def get_filtered_lidar(lidar, boxes3d=None):
         box_z = (boxes3d[:, :, 2] >= cfg.zrange[0]) & (boxes3d[:, :, 2] < cfg.zrange[1])
         box_xyz = np.sum(box_x & box_y & box_z,axis=1)
 
-        return lidar[filter_xyz], boxes3d[box_xyz>0]
+        return lidar[filter_xyz], boxes3d[box_xyz>0], gt_box3d[box_xyz>0]
 
     return lidar[filter_xyz]
 
@@ -75,91 +79,91 @@ def lidar_to_bev(lidar):
     return top, density_image
 
 
-def draw_lidar(lidar, is_grid=False, is_axis = True, is_top_region=True, fig=None):
+# def draw_lidar(lidar, is_grid=False, is_axis = True, is_top_region=True, fig=None):
 
-    pxs=lidar[:,0]
-    pys=lidar[:,1]
-    pzs=lidar[:,2]
-    prs=lidar[:,3]
+#     pxs=lidar[:,0]
+#     pys=lidar[:,1]
+#     pzs=lidar[:,2]
+#     prs=lidar[:,3]
 
-    if fig is None: fig = mlab.figure(figure=None, bgcolor=(0,0,0), fgcolor=None, engine=None, size=(1000, 500))
+#     if fig is None: fig = mlab.figure(figure=None, bgcolor=(0,0,0), fgcolor=None, engine=None, size=(1000, 500))
 
-    mlab.points3d(
-        pxs, pys, pzs, prs,
-        mode='point',  # 'point'  'sphere'
-        colormap='gnuplot',  #'bone',  #'spectral',  #'copper',
-        scale_factor=1,
-        figure=fig)
+#     mlab.points3d(
+#         pxs, pys, pzs, prs,
+#         mode='point',  # 'point'  'sphere'
+#         colormap='gnuplot',  #'bone',  #'spectral',  #'copper',
+#         scale_factor=1,
+#         figure=fig)
 
-    #draw grid
-    if is_grid:
-        mlab.points3d(0, 0, 0, color=(1,1,1), mode='sphere', scale_factor=0.2)
+#     #draw grid
+#     if is_grid:
+#         mlab.points3d(0, 0, 0, color=(1,1,1), mode='sphere', scale_factor=0.2)
 
-        for y in np.arange(-50,50,1):
-            x1,y1,z1 = -50, y, 0
-            x2,y2,z2 =  50, y, 0
-            mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#         for y in np.arange(-50,50,1):
+#             x1,y1,z1 = -50, y, 0
+#             x2,y2,z2 =  50, y, 0
+#             mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
 
-        for x in np.arange(-50,50,1):
-            x1,y1,z1 = x,-50, 0
-            x2,y2,z2 = x, 50, 0
-            mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#         for x in np.arange(-50,50,1):
+#             x1,y1,z1 = x,-50, 0
+#             x2,y2,z2 = x, 50, 0
+#             mlab.plot3d([x1, x2], [y1, y2], [z1,z2], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
 
-    #draw axis
-    if is_grid:
-        mlab.points3d(0, 0, 0, color=(1,1,1), mode='sphere', scale_factor=0.2)
+#     #draw axis
+#     if is_grid:
+#         mlab.points3d(0, 0, 0, color=(1,1,1), mode='sphere', scale_factor=0.2)
 
-        axes=np.array([
-            [2.,0.,0.,0.],
-            [0.,2.,0.,0.],
-            [0.,0.,2.,0.],
-        ],dtype=np.float64)
-        fov=np.array([  ##<todo> : now is 45 deg. use actual setting later ...
-            [20., 20., 0.,0.],
-            [20.,-20., 0.,0.],
-        ],dtype=np.float64)
+#         axes=np.array([
+#             [2.,0.,0.,0.],
+#             [0.,2.,0.,0.],
+#             [0.,0.,2.,0.],
+#         ],dtype=np.float64)
+#         fov=np.array([  ##<todo> : now is 45 deg. use actual setting later ...
+#             [20., 20., 0.,0.],
+#             [20.,-20., 0.,0.],
+#         ],dtype=np.float64)
 
 
-        mlab.plot3d([0, axes[0,0]], [0, axes[0,1]], [0, axes[0,2]], color=(1,0,0), tube_radius=None, figure=fig)
-        mlab.plot3d([0, axes[1,0]], [0, axes[1,1]], [0, axes[1,2]], color=(0,1,0), tube_radius=None, figure=fig)
-        mlab.plot3d([0, axes[2,0]], [0, axes[2,1]], [0, axes[2,2]], color=(0,0,1), tube_radius=None, figure=fig)
-        mlab.plot3d([0, fov[0,0]], [0, fov[0,1]], [0, fov[0,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
-        mlab.plot3d([0, fov[1,0]], [0, fov[1,1]], [0, fov[1,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
+#         mlab.plot3d([0, axes[0,0]], [0, axes[0,1]], [0, axes[0,2]], color=(1,0,0), tube_radius=None, figure=fig)
+#         mlab.plot3d([0, axes[1,0]], [0, axes[1,1]], [0, axes[1,2]], color=(0,1,0), tube_radius=None, figure=fig)
+#         mlab.plot3d([0, axes[2,0]], [0, axes[2,1]], [0, axes[2,2]], color=(0,0,1), tube_radius=None, figure=fig)
+#         mlab.plot3d([0, fov[0,0]], [0, fov[0,1]], [0, fov[0,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
+#         mlab.plot3d([0, fov[1,0]], [0, fov[1,1]], [0, fov[1,2]], color=(1,1,1), tube_radius=None, line_width=1, figure=fig)
 
-    #draw top_image feature area
-    if is_top_region:
-        x1 = cfg.xrange[0]
-        x2 = cfg.xrange[1]
-        y1 = cfg.yrange[0]
-        y2 = cfg.yrange[1]
-        mlab.plot3d([x1, x1], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
-        mlab.plot3d([x2, x2], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
-        mlab.plot3d([x1, x2], [y1, y1], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
-        mlab.plot3d([x1, x2], [y2, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#     #draw top_image feature area
+#     if is_top_region:
+#         x1 = cfg.xrange[0]
+#         x2 = cfg.xrange[1]
+#         y1 = cfg.yrange[0]
+#         y2 = cfg.yrange[1]
+#         mlab.plot3d([x1, x1], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#         mlab.plot3d([x2, x2], [y1, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#         mlab.plot3d([x1, x2], [y1, y1], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
+#         mlab.plot3d([x1, x2], [y2, y2], [0,0], color=(0.5,0.5,0.5), tube_radius=None, line_width=1, figure=fig)
 
-    mlab.orientation_axes()
-    mlab.view(azimuth=180,elevation=None,distance=50,focalpoint=[ 12.0909996 , -1.04700089, -2.03249991])#2.0909996 , -1.04700089, -2.03249991
+#     mlab.orientation_axes()
+#     mlab.view(azimuth=180,elevation=None,distance=50,focalpoint=[ 12.0909996 , -1.04700089, -2.03249991])#2.0909996 , -1.04700089, -2.03249991
 
-    return fig
+#     return fig
 
-def draw_gt_boxes3d(gt_boxes3d, fig, color=(1,0,0), line_width=2):
+# def draw_gt_boxes3d(gt_boxes3d, fig, color=(1,0,0), line_width=2):
 
-    num = len(gt_boxes3d)
-    for n in range(num):
-        b = gt_boxes3d[n]
+#     num = len(gt_boxes3d)
+#     for n in range(num):
+#         b = gt_boxes3d[n]
 
-        for k in range(0,4):
+#         for k in range(0,4):
 
-            i,j=k,(k+1)%4
-            mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
+#             i,j=k,(k+1)%4
+#             mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
 
-            i,j=k+4,(k+3)%4 + 4
-            mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
+#             i,j=k+4,(k+3)%4 + 4
+#             mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
 
-            i,j=k,k+4
-            mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
+#             i,j=k,k+4
+#             mlab.plot3d([b[i,0], b[j,0]], [b[i,1], b[j,1]], [b[i,2], b[j,2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
 
-    mlab.view(azimuth=180,elevation=None,distance=50,focalpoint=[ 12.0909996 , -1.04700089, -2.03249991])#2.0909996 , -1.04700089, -2.03249991
+#     mlab.view(azimuth=180,elevation=None,distance=50,focalpoint=[ 12.0909996 , -1.04700089, -2.03249991])#2.0909996 , -1.04700089, -2.03249991
 
 def project_velo2rgb(velo,calib):
     T=np.zeros([4,4],dtype=np.float32)
@@ -280,16 +284,6 @@ def box3d_cam_to_velo(box3d, Tr):
         lidar_loc = lidar_loc_[:3]
         return lidar_loc.reshape(1, 3)
 
-    def ry_to_rz(ry):
-        angle = -ry - np.pi / 2
-
-        if angle >= np.pi:
-            angle -= np.pi
-        if angle < -np.pi:
-            angle = 2*np.pi + angle
-
-        return angle
-
     h,w,l,tx,ty,tz,ry = [float(i) for i in box3d]
     cam = np.ones([4, 1])
     cam[0] = tx
@@ -301,7 +295,7 @@ def box3d_cam_to_velo(box3d, Tr):
                     [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2],
                     [0, 0, 0, 0, h, h, h, h]])
 
-    rz = ry_to_rz(ry)
+    rz = angle_in_limit(-ry-np.pi/2)
 
     rotMat = np.array([
         [np.cos(rz), -np.sin(rz), 0.0],
@@ -314,7 +308,7 @@ def box3d_cam_to_velo(box3d, Tr):
 
     box3d_corner = cornerPosInVelo.transpose()
 
-    return box3d_corner.astype(np.float32)
+    return box3d_corner.astype(np.float32), np.array([t_lidar[0,0], t_lidar[0,1], t_lidar[0,2], h, w, l, rz])
 
 def anchors_center_to_corner(anchors):
     N = anchors.shape[0]
@@ -393,6 +387,7 @@ def load_kitti_label(label_file, Tr):
         lines = f.readlines()
 
     gt_boxes3d_corner = []
+    gt_boxes3d = []
 
     num_obj = len(lines)
 
@@ -403,13 +398,15 @@ def load_kitti_label(label_file, Tr):
         if obj_class not in cfg.class_list:
             continue
 
-        box3d_corner = box3d_cam_to_velo(obj[8:], Tr)
+        box3d_corner, box3d_vertice = box3d_cam_to_velo(obj[8:], Tr)
 
+        gt_boxes3d.append(box3d_vertice)
         gt_boxes3d_corner.append(box3d_corner)
 
     gt_boxes3d_corner = np.array(gt_boxes3d_corner).reshape(-1,8,3)
+    gt_boxes3d = np.array(gt_boxes3d).reshape(-1, 7)
 
-    return gt_boxes3d_corner
+    return gt_boxes3d_corner, gt_boxes3d
 
 
 def test():
@@ -467,6 +464,37 @@ def test():
     density_with_box = draw_polygons(density_image,gt_box3d[:,:4,:2])
     plt.imshow(density_with_box,cmap='gray')
     plt.show()
+
+def plot_grad(grad, epoch, name):
+    if not os.path.exists('./vis/%d'%(epoch)):
+        os.mkdir('./vis/%d'%(epoch))
+    plt.figure()
+    grad = grad.detach().cpu().numpy()
+    matplotlib.rcParams['font.sans-serif']=['SimHei']   # 用黑体显示中文
+    matplotlib.rcParams['axes.unicode_minus']=False     # 正常显示负号
+    plt.hist(grad, bins=40, facecolor="blue", edgecolor="black", alpha=0.7)
+    # 显示横轴标签
+    plt.xlabel("value")
+    # 显示纵轴标签
+    plt.ylabel("frequency")
+    # 显示图标题
+    mean = np.mean(grad)
+    var = np.var(grad)
+    plt.title("mean: %.4f,  var: %.4f"%(mean, var))
+    plt.savefig('./vis/%d/%s.png'%(epoch, name))
+
+def print_prob(score, name):
+    score = score.permute(0, 3, 1, 2)
+    score = score.detach().cpu().numpy()
+    score_1 = score[0, ...]
+    up = score_1[0, ...]
+    down = score_1[1, ...]
+    score = np.bitwise_or(up > 0.8 , down > 0.8)
+
+    plt.figure()
+    plt.imshow(score.astype(np.uint8), cmap='hot')
+    plt.colorbar()
+    plt.savefig(name)
 
 if __name__ == '__main__':
     test()
