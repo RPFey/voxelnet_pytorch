@@ -1,0 +1,25 @@
+MODEL:
+    name: frustum
+    use_xyz: True
+    features: 3
+    object_points: 512
+    num_heading_bin: 12
+    num_size_cluster: 10
+    OPTIMIZATION:
+        lr_decay: 0.1
+        decay_epoch_list: [0.6, 0.8]
+        lr: 0.001
+        lr_clip: 0.001
+        bn_momentum: 0.001
+        bnm_decay: 0.1
+        bnm_clip: 0.001
+        weight_decay: 0.001
+    LOSS:
+        mask_loss: 1.0
+        center_loss: 1.0
+        stage1_center_loss: 1.0
+        heading_class_loss: 1.0
+        heading_residual_normalized_loss: 20.0
+        size_residual_normalized_loss: 20.0
+        size_class_loss: 1.0
+        corners_loss: 10.0
